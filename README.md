@@ -1,47 +1,162 @@
-# Svelte + TS + Vite
+# CV Generator
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+Generador visual de currículums hecho con **Vite**, **Svelte** y **pdf-lib**.
 
-## Recommended IDE Setup
+La aplicación permite crear un CV desde el navegador, editar los campos visualmente, ordenar apartados, añadir fotografía y exportar el contenido a varios formatos.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+## Funcionalidades
 
-## Need an official Svelte framework?
+- Editor visual de CV en Svelte.
+- Wizard inicial para datos básicos.
+- Fotografía opcional.
+- Apartados predeterminados:
+  - Experiencia.
+  - Formación.
+  - Competencias.
+  - Idiomas.
+  - Proyectos.
+  - Apartados personalizados.
+- Reordenación de secciones con drag & drop.
+- Exportación a:
+  - PDF.
+  - Word compatible mediante `.doc` HTML.
+  - Markdown.
+  - JSON importable.
+- Importación de JSON para seguir editando.
+- Guardado local en `localStorage`.
+- Modo claro/oscuro.
+- Despliegue preparado para GitHub Pages y dominio propio.
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+## Decisión importante: diseño PDF-first
 
-## Technical considerations
+Este proyecto debe seguir una arquitectura **PDF-first**.
 
-**Why use this over SvelteKit?**
+Eso significa que el PDF es la referencia principal del diseño. El editor no debe ser una maqueta HTML libre que luego intentamos capturar como PDF. El editor debe aproximarse a lo que el generador PDF puede reproducir de forma estable.
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+### Por qué
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+Se probaron varios enfoques para hacer que el PDF fuese exactamente igual al editor visual:
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+1. Capturar el DOM con SVG y `foreignObject`.
+2. Capturar el DOM con `html2canvas`.
+3. Pintar un PDF intentando copiar el CSS del editor.
+4. Usar la impresión nativa del navegador.
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+Todos tienen problemas en una app estática:
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+- No todos los navegadores renderizan `foreignObject` igual.
+- `html2canvas` no reproduce todos los estilos CSS con fidelidad.
+- Los inputs, textareas, sombras, gradientes y layouts complejos no se trasladan bien a PDF.
+- La impresión nativa no sirve si queremos descargar un PDF directamente desde la app.
+- GitHub Pages no puede ejecutar Chromium, Playwright o Puppeteer en backend.
 
-**Why include `.vscode/extensions.json`?**
+Por eso, la estrategia correcta es:
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `allowJs` in the TS template?**
-
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```txt
+Plantilla PDF controlada → editor visual que imita esa plantilla → exportación estable
 ```
+
+Y no:
+
+```txt
+Editor HTML/CSS libre → intentar capturarlo como PDF idéntico
+```
+
+## Reglas para futuras mejoras
+
+Al tocar el editor o los modelos de CV, hay que respetar estas reglas:
+
+1. El diseño debe poder reproducirse con `pdf-lib` o con el renderizador PDF interno.
+2. Evitar depender de capturas de DOM para el PDF.
+3. Evitar `html2canvas`, SVG `foreignObject`, iframes de impresión o módulos remotos para generar PDF.
+4. No prometer que el PDF será idéntico al editor si no comparten la misma especificación de plantilla.
+5. Si se añade un nuevo modelo visual, también debe definirse su equivalente PDF.
+6. El editor debe usar estilos compatibles con el PDF:
+   - márgenes fijos;
+   - columnas simples;
+   - tamaños controlados;
+   - colores sólidos o gradientes sencillos;
+   - tipografías del sistema;
+   - sin efectos difíciles de exportar.
+7. Los campos vacíos no deben aparecer en PDF, Markdown ni Word.
+8. La fotografía debe tratarse como un recurso opcional y comprimible si causa problemas de memoria.
+
+## Modelos de CV
+
+Los modelos actuales son:
+
+- **Aurora**: visual, con acentos azules y violetas.
+- **Ejecutivo**: sobrio, formal y compacto.
+- **Minimal**: limpio, con mucho aire.
+- **Sidebar**: estructura con columna lateral.
+- **Editorial**: estilo más elegante y de revista.
+- **Tech**: oscuro y orientado a perfiles digitales.
+
+Cada modelo debe entenderse como una plantilla PDF con una representación aproximada en el editor.
+
+## Exportación PDF
+
+La exportación PDF debe ser estable antes que idéntica.
+
+La app usa `pdf-lib` para generar un PDF real descargable. El objetivo es que el resultado se parezca al editor tanto como sea razonable, pero la fuente de verdad debe ser la plantilla PDF.
+
+Si en el futuro se quiere un PDF 1:1 con HTML/CSS real, la solución adecuada no es GitHub Pages, sino un backend o función serverless con Chromium:
+
+- Playwright.
+- Puppeteer.
+- Cloudflare Browser Rendering.
+- Vercel/Netlify Function con Chromium.
+
+## Desarrollo
+
+Instalar dependencias:
+
+```bash
+npm install
+```
+
+Arrancar en local:
+
+```bash
+npm run dev
+```
+
+Comprobar tipos y Svelte:
+
+```bash
+npm run check
+```
+
+Generar build:
+
+```bash
+npm run build
+```
+
+Previsualizar build:
+
+```bash
+npm run preview
+```
+
+## Despliegue
+
+El proyecto está preparado para GitHub Pages mediante GitHub Actions.
+
+En GitHub hay que usar:
+
+```txt
+Settings → Pages → Build and deployment → Source: GitHub Actions
+```
+
+El workflow genera `dist` y lo publica automáticamente.
+
+## Dominio
+
+Dominio principal previsto:
+
+```txt
+https://cvgenerator.alon.one/
+```
+
+La configuración de Vite usa rutas relativas para funcionar tanto en dominio propio como en GitHub Pages.
