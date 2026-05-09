@@ -1,10 +1,18 @@
 import { mount } from 'svelte'
+import { PDFDocument } from 'pdf-lib'
 import './app.css'
 import App from './App.svelte'
+
+type Html2Canvas = (element: HTMLElement, options?: Record<string, unknown>) => Promise<HTMLCanvasElement>
 
 const app = mount(App, {
   target: document.getElementById('app')!,
 })
+
+async function loadHtml2Canvas(): Promise<Html2Canvas> {
+  const module = await import(/* @vite-ignore */ 'https://esm.sh/html2canvas@1.4.1')
+  return (module.default ?? module) as Html2Canvas
+}
 
 function getPrintableCss() {
   return Array.from(document.styleSheets)
@@ -20,9 +28,21 @@ function getPrintableCss() {
     .join('\n')
 }
 
-function prepareCvCloneForPrint(source: HTMLElement) {
+function safeFilename() {
+  const value = document.querySelector<HTMLInputElement>('.cv-name')?.value || 'cv'
+  return (
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'cv'
+  )
+}
+
+function prepareCvCloneForPdf(source: HTMLElement) {
   const clone = source.cloneNode(true) as HTMLElement
-  clone.classList.add('print-export')
+  clone.classList.add('pdf-capture-export')
 
   clone.querySelectorAll('.mini-actions, .item-actions, .photo-actions, .empty-only').forEach((node) => node.remove())
 
@@ -51,8 +71,7 @@ function prepareCvCloneForPrint(source: HTMLElement) {
   })
 
   clone.querySelectorAll('.cv-section').forEach((node) => {
-    const hasItems = node.querySelector('.cv-item')
-    if (!hasItems) node.remove()
+    if (!node.querySelector('.cv-item')) node.remove()
   })
 
   const summary = clone.querySelector('.cv-summary')
@@ -63,22 +82,29 @@ function prepareCvCloneForPrint(source: HTMLElement) {
   return clone
 }
 
-function openNativePdfPreview() {
-  const cvPage = document.querySelector<HTMLElement>('.cv-page')
-  if (!cvPage) return
+async function createPdfFromVisibleCv() {
+  const source = document.querySelector<HTMLElement>('.cv-page')
+  if (!source) throw new Error('No se ha encontrado el CV visible')
 
-  const printableCv = prepareCvCloneForPrint(cvPage)
-  const css = getPrintableCss()
-  const printCss = `
-    @page { size: A4; margin: 0; }
-    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .print-export {
-      width: 210mm !important;
-      min-height: 297mm !important;
+  const html2canvas = await loadHtml2Canvas()
+  const clone = prepareCvCloneForPdf(source)
+  const wrapper = document.createElement('div')
+  const style = document.createElement('style')
+
+  style.textContent = `${getPrintableCss()}
+    .pdf-capture-root {
+      position: fixed;
+      left: -100000px;
+      top: 0;
+      width: ${source.scrollWidth}px;
+      background: #ffffff;
+      pointer-events: none;
+      z-index: -1;
+    }
+    .pdf-capture-export {
+      width: ${source.scrollWidth}px !important;
+      min-height: ${source.scrollHeight}px !important;
       margin: 0 !important;
-      border: 0 !important;
-      border-radius: 0 !important;
       box-shadow: none !important;
       transform: none !important;
     }
@@ -91,77 +117,104 @@ function openNativePdfPreview() {
       padding: 0 !important;
       color: inherit !important;
       white-space: pre-wrap !important;
+      overflow: visible !important;
     }
     .printed-field.cv-textarea,
     .printed-field.item-description {
       display: block !important;
       width: 100% !important;
     }
-    .site-header, .hero-section, .control-panel, .workspace-toolbar, .modal-backdrop,
     .mini-actions, .item-actions, .photo-actions { display: none !important; }
   `
 
-  const iframe = document.createElement('iframe')
-  iframe.title = 'Vista previa de impresión del CV'
-  iframe.style.position = 'fixed'
-  iframe.style.right = '0'
-  iframe.style.bottom = '0'
-  iframe.style.width = '0'
-  iframe.style.height = '0'
-  iframe.style.border = '0'
-  document.body.append(iframe)
+  wrapper.className = 'pdf-capture-root'
+  wrapper.append(style, clone)
+  document.body.append(wrapper)
 
-  const doc = iframe.contentDocument
-  if (!doc) return
+  try {
+    const canvas = await html2canvas(clone, {
+      backgroundColor: null,
+      scale: Math.min(window.devicePixelRatio || 2, 2),
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      windowWidth: source.scrollWidth,
+      windowHeight: source.scrollHeight,
+    })
 
-  doc.open()
-  doc.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>CV</title><style>${css}\n${printCss}</style></head><body>${printableCv.outerHTML}</body></html>`)
-  doc.close()
+    const pdfDoc = await PDFDocument.create()
+    const pageWidth = 595.28
+    const pageHeight = 841.89
+    const scale = pageWidth / canvas.width
+    const sliceHeight = Math.floor(pageHeight / scale)
 
-  const runPrint = () => {
-    iframe.contentWindow?.focus()
-    iframe.contentWindow?.print()
-    setTimeout(() => iframe.remove(), 1200)
-  }
+    for (let y = 0; y < canvas.height; y += sliceHeight) {
+      const pageCanvas = document.createElement('canvas')
+      pageCanvas.width = canvas.width
+      pageCanvas.height = Math.min(sliceHeight, canvas.height - y)
+      const ctx = pageCanvas.getContext('2d')
+      if (!ctx) throw new Error('No se pudo crear el canvas del PDF')
+      ctx.drawImage(canvas, 0, y, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height)
 
-  const images = Array.from(doc.images)
-  if (!images.length) {
-    setTimeout(runPrint, 80)
-    return
-  }
-
-  let pending = images.length
-  const done = () => {
-    pending -= 1
-    if (pending <= 0) setTimeout(runPrint, 80)
-  }
-
-  images.forEach((image) => {
-    if (image.complete) done()
-    else {
-      image.addEventListener('load', done, { once: true })
-      image.addEventListener('error', done, { once: true })
+      const png = await pdfDoc.embedPng(pageCanvas.toDataURL('image/png'))
+      const page = pdfDoc.addPage([pageWidth, pageHeight])
+      const imageHeight = pageCanvas.height * scale
+      page.drawImage(png, {
+        x: 0,
+        y: pageHeight - imageHeight,
+        width: pageWidth,
+        height: imageHeight,
+      })
     }
-  })
+
+    const bytes = await pdfDoc.save()
+    const pdfBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    return new Blob([pdfBuffer], { type: 'application/pdf' })
+  } finally {
+    wrapper.remove()
+  }
 }
 
-document.addEventListener(
-  'click',
-  (event) => {
-    const button = (event.target as HTMLElement).closest('button')
-    if (!button) return
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
 
-    const label = button.textContent?.toLowerCase().trim() || ''
-    const isPdfAction = label.includes('preview pdf') || label.includes('previsualizar pdf') || label.includes('descargar pdf')
+async function handlePdfClick(event: Event) {
+  const button = (event.target as HTMLElement).closest('button')
+  if (!button) return
 
-    if (!isPdfAction) return
+  const label = button.textContent?.toLowerCase().trim() || ''
+  const isPdfAction = label.includes('preview pdf') || label.includes('previsualizar pdf') || label.includes('descargar pdf')
 
-    event.preventDefault()
-    event.stopPropagation()
-    event.stopImmediatePropagation()
-    openNativePdfPreview()
-  },
-  true,
-)
+  if (!isPdfAction) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+
+  button.setAttribute('disabled', 'true')
+  const previousText = button.textContent || ''
+  button.textContent = 'Generando PDF...'
+
+  try {
+    const blob = await createPdfFromVisibleCv()
+    downloadBlob(blob, `${safeFilename()}.pdf`)
+  } catch (error) {
+    console.error(error)
+    alert('No se pudo generar el PDF. Prueba con una imagen más ligera o recarga la página.')
+  } finally {
+    button.removeAttribute('disabled')
+    button.textContent = previousText
+  }
+}
+
+document.addEventListener('click', handlePdfClick, true)
 
 export default app
