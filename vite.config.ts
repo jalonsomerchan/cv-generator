@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
-// GitHub Pages publica este repositorio bajo /cv-generator/.
-// En desarrollo local mantenemos base relativa a raíz para que Vite funcione como siempre.
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/cv-generator/' : '/',
+// Usamos rutas relativas para que el build funcione igual en dominio propio
+// (https://cvgenerator.alon.one/) y en GitHub Pages bajo subcarpeta.
+export default defineConfig({
+  base: './',
   plugins: [svelte()],
-}))
+})
