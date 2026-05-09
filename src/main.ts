@@ -5,13 +5,20 @@ import App from './App.svelte'
 
 type Html2Canvas = (element: HTMLElement, options?: Record<string, unknown>) => Promise<HTMLCanvasElement>
 
+type Html2CanvasModule = {
+  default?: Html2Canvas
+}
+
 const app = mount(App, {
   target: document.getElementById('app')!,
 })
 
 async function loadHtml2Canvas(): Promise<Html2Canvas> {
-  const module = await import(/* @vite-ignore */ 'https://esm.sh/html2canvas@1.4.1')
-  return (module.default ?? module) as Html2Canvas
+  const loadRemoteModule = new Function('url', 'return import(url)') as (
+    url: string,
+  ) => Promise<Html2CanvasModule | Html2Canvas>
+  const module = await loadRemoteModule('https://esm.sh/html2canvas@1.4.1')
+  return (typeof module === 'function' ? module : module.default) as Html2Canvas
 }
 
 function getPrintableCss() {
