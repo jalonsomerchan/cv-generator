@@ -1,7 +1,7 @@
 <script lang="ts">
   import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 
-  type CvTheme = 'clasico' | 'moderno' | 'creativo'
+  type CvTheme = 'moderno' | 'clasico' | 'creativo'
   type SectionType = 'experience' | 'education' | 'skills' | 'languages' | 'projects' | 'custom'
 
   type CvItem = {
@@ -31,19 +31,24 @@
     sections: CvSection[]
   }
 
-  type WizardData = {
-    name: string
-    headline: string
-    email: string
-    phone: string
-    location: string
-    website: string
-    summary: string
-  }
-
-  const STORAGE_KEY = 'cv-generator:data:v1'
+  const STORAGE_KEY = 'cv-generator:data:v3'
   const THEME_KEY = 'cv-generator:theme'
   const randomId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
+
+  const sectionLabels: Record<SectionType, string> = {
+    experience: 'Experiencia',
+    education: 'Formación',
+    skills: 'Competencias',
+    languages: 'Idiomas',
+    projects: 'Proyectos',
+    custom: 'Apartado personalizado',
+  }
+
+  const themes: { id: CvTheme; name: string; description: string }[] = [
+    { id: 'moderno', name: 'Moderno', description: 'Color, presencia visual y estructura clara.' },
+    { id: 'clasico', name: 'Clásico', description: 'Sobrio, formal y muy legible.' },
+    { id: 'creativo', name: 'Creativo', description: 'Más expresivo, con lateral y acento visual.' },
+  ]
 
   const starterCv = (): CvData => ({
     name: 'Tu nombre',
@@ -65,12 +70,8 @@
             title: 'Puesto o rol profesional',
             subtitle: 'Empresa o cliente',
             meta: '2023 - actualidad',
-            description:
-              'Describe tu responsabilidad principal, el contexto del puesto y el impacto de tu trabajo.',
-            bullets: [
-              'Logro medible o responsabilidad destacada.',
-              'Proyecto relevante, herramienta utilizada o mejora conseguida.',
-            ],
+            description: 'Describe tu responsabilidad principal, el contexto del puesto y el impacto de tu trabajo.',
+            bullets: ['Logro medible o responsabilidad destacada.', 'Proyecto relevante o mejora conseguida.'],
           },
         ],
       },
@@ -99,8 +100,7 @@
             title: 'Frontend, diseño, SEO técnico, accesibilidad',
             subtitle: '',
             meta: '',
-            description:
-              'Añade tus habilidades separadas por comas o crea apartados nuevos para agruparlas mejor.',
+            description: 'Añade tus habilidades separadas por comas o crea apartados nuevos.',
             bullets: [],
           },
         ],
@@ -123,7 +123,13 @@
     ],
   })
 
-  const emptyWizard: WizardData = {
+  let cv: CvData = starterCv()
+  let selectedTheme: CvTheme = 'moderno'
+  let wizardOpen = true
+  let showMobilePanel = false
+  let importInput: HTMLInputElement | undefined
+  let statusMessage = 'Edita directamente los campos dentro del CV.'
+  let wizard = {
     name: '',
     headline: '',
     email: '',
@@ -131,41 +137,6 @@
     location: '',
     website: '',
     summary: '',
-  }
-
-  let cv: CvData = starterCv()
-  let selectedTheme: CvTheme = 'moderno'
-  let wizardOpen = true
-  let wizard = { ...emptyWizard }
-  let importInput: HTMLInputElement
-  let statusMessage = 'Edita cualquier texto directamente en la previsualización.'
-  let showMobilePanel = false
-
-  const themes: { id: CvTheme; name: string; description: string }[] = [
-    {
-      id: 'moderno',
-      name: 'Moderno',
-      description: 'Cabecera con color, tarjetas suaves y buena presencia visual.',
-    },
-    {
-      id: 'clasico',
-      name: 'Clásico',
-      description: 'Sobrio, muy legible y pensado para procesos tradicionales.',
-    },
-    {
-      id: 'creativo',
-      name: 'Creativo',
-      description: 'Más expresivo, con lateral destacado y bloques con personalidad.',
-    },
-  ]
-
-  const sectionLabels: Record<SectionType, string> = {
-    experience: 'Experiencia',
-    education: 'Formación',
-    skills: 'Competencias',
-    languages: 'Idiomas',
-    projects: 'Proyectos',
-    custom: 'Apartado personalizado',
   }
 
   if (typeof window !== 'undefined') {
@@ -191,9 +162,10 @@
   $: completion = getCompletion(cv)
   $: markdownContent = toMarkdown(cv)
 
-  function normalizeCv(value: CvData): CvData {
+  function normalizeCv(value: Partial<CvData>): CvData {
+    const fallback = starterCv()
     return {
-      ...starterCv(),
+      ...fallback,
       ...value,
       sections: Array.isArray(value.sections)
         ? value.sections.map((section) => ({
@@ -211,7 +183,7 @@
                 }))
               : [],
           }))
-        : starterCv().sections,
+        : fallback.sections,
     }
   }
 
@@ -225,51 +197,55 @@
     statusMessage = message
   }
 
-  function updateField<K extends keyof CvData>(field: K, value: CvData[K]) {
+  function updateCvField<K extends keyof CvData>(field: K, value: CvData[K]) {
     cv = { ...cv, [field]: value }
     persist()
   }
 
-  function updateSectionTitle(sectionId: string, title: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId ? { ...section, title } : section,
-    )
-    touch()
+  function updateSection(sectionId: string, patch: Partial<CvSection>) {
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId ? { ...section, ...patch } : section,
+      ),
+    }
+    persist()
   }
 
-  function updateItem(sectionId: string, itemId: string, field: keyof CvItem, value: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? {
-            ...section,
-            items: section.items.map((item) =>
-              item.id === itemId ? { ...item, [field]: value } : item,
-            ),
-          }
-        : section,
-    )
-    touch()
+  function updateItem(sectionId: string, itemId: string, patch: Partial<CvItem>) {
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId
+          ? {
+              ...section,
+              items: section.items.map((item) =>
+                item.id === itemId ? { ...item, ...patch } : item,
+              ),
+            }
+          : section,
+      ),
+    }
+    persist()
   }
 
-  function updateBullet(sectionId: string, itemId: string, bulletIndex: number, value: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? {
-            ...section,
-            items: section.items.map((item) =>
-              item.id === itemId
-                ? {
-                    ...item,
-                    bullets: item.bullets.map((bullet, index) =>
-                      index === bulletIndex ? value : bullet,
-                    ),
-                  }
-                : item,
-            ),
-          }
-        : section,
-    )
-    touch()
+  function updateBullet(sectionId: string, itemId: string, index: number, value: string) {
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId
+          ? {
+              ...section,
+              items: section.items.map((item) =>
+                item.id === itemId
+                  ? { ...item, bullets: item.bullets.map((bullet, i) => (i === index ? value : bullet)) }
+                  : item,
+              ),
+            }
+          : section,
+      ),
+    }
+    persist()
   }
 
   function applyWizard() {
@@ -285,20 +261,19 @@
     }
     wizardOpen = false
     persist()
-    statusMessage = 'Datos básicos añadidos. Ahora puedes editar el CV directamente.'
+    statusMessage = 'Datos básicos añadidos. Ya puedes editar el CV directamente.'
   }
 
   function skipWizard() {
     wizardOpen = false
-    statusMessage = 'Plantilla de ejemplo cargada. Puedes editarla directamente.'
+    statusMessage = 'Plantilla de ejemplo cargada.'
   }
 
   function addSection(type: SectionType = 'custom') {
-    const title = sectionLabels[type]
-    const newSection: CvSection = {
+    const section: CvSection = {
       id: randomId(),
       type,
-      title,
+      title: sectionLabels[type],
       items: [
         {
           id: randomId(),
@@ -310,9 +285,8 @@
         },
       ],
     }
-
-    cv = { ...cv, sections: [...cv.sections, newSection] }
-    touch('Apartado añadido al CV.')
+    cv = { ...cv, sections: [...cv.sections, section] }
+    touch('Apartado añadido.')
   }
 
   function removeSection(sectionId: string) {
@@ -322,81 +296,85 @@
 
   function moveSection(sectionId: string, direction: -1 | 1) {
     const index = cv.sections.findIndex((section) => section.id === sectionId)
-    const targetIndex = index + direction
-    if (index < 0 || targetIndex < 0 || targetIndex >= cv.sections.length) return
-
+    const nextIndex = index + direction
+    if (index < 0 || nextIndex < 0 || nextIndex >= cv.sections.length) return
     const sections = [...cv.sections]
     const [section] = sections.splice(index, 1)
-    sections.splice(targetIndex, 0, section)
+    sections.splice(nextIndex, 0, section)
     cv = { ...cv, sections }
     touch('Apartado reordenado.')
   }
 
   function addItem(sectionId: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? {
-            ...section,
-            items: [
-              ...section.items,
-              {
-                id: randomId(),
-                title: 'Nuevo elemento',
-                subtitle: '',
-                meta: '',
-                description: 'Añade la descripción de este elemento.',
-                bullets: [],
-              },
-            ],
-          }
-        : section,
-    )
+    const item: CvItem = {
+      id: randomId(),
+      title: 'Nuevo elemento',
+      subtitle: '',
+      meta: '',
+      description: 'Añade la descripción de este elemento.',
+      bullets: [],
+    }
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId ? { ...section, items: [...section.items, item] } : section,
+      ),
+    }
     touch('Elemento añadido.')
   }
 
   function removeItem(sectionId: string, itemId: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? { ...section, items: section.items.filter((item) => item.id !== itemId) }
-        : section,
-    )
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId
+          ? { ...section, items: section.items.filter((item) => item.id !== itemId) }
+          : section,
+      ),
+    }
     touch('Elemento eliminado.')
   }
 
   function addBullet(sectionId: string, itemId: string) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? {
-            ...section,
-            items: section.items.map((item) =>
-              item.id === itemId ? { ...item, bullets: [...item.bullets, 'Nuevo punto clave.'] } : item,
-            ),
-          }
-        : section,
-    )
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId
+          ? {
+              ...section,
+              items: section.items.map((item) =>
+                item.id === itemId ? { ...item, bullets: [...item.bullets, 'Nuevo punto clave.'] } : item,
+              ),
+            }
+          : section,
+      ),
+    }
     touch('Punto añadido.')
   }
 
-  function removeBullet(sectionId: string, itemId: string, bulletIndex: number) {
-    cv.sections = cv.sections.map((section) =>
-      section.id === sectionId
-        ? {
-            ...section,
-            items: section.items.map((item) =>
-              item.id === itemId
-                ? { ...item, bullets: item.bullets.filter((_, index) => index !== bulletIndex) }
-                : item,
-            ),
-          }
-        : section,
-    )
+  function removeBullet(sectionId: string, itemId: string, index: number) {
+    cv = {
+      ...cv,
+      sections: cv.sections.map((section) =>
+        section.id === sectionId
+          ? {
+              ...section,
+              items: section.items.map((item) =>
+                item.id === itemId
+                  ? { ...item, bullets: item.bullets.filter((_, i) => i !== index) }
+                  : item,
+              ),
+            }
+          : section,
+      ),
+    }
     touch('Punto eliminado.')
   }
 
   function resetCv() {
     cv = starterCv()
-    wizard = { ...emptyWizard }
     wizardOpen = true
+    wizard = { name: '', headline: '', email: '', phone: '', location: '', website: '', summary: '' }
     persist()
     statusMessage = 'CV reiniciado.'
   }
@@ -408,8 +386,8 @@
     localStorage.setItem(THEME_KEY, next)
   }
 
-  function textFromEvent(event: Event) {
-    return (event.currentTarget as HTMLElement).innerText.trim()
+  function inputValue(event: Event) {
+    return (event.currentTarget as HTMLInputElement).value
   }
 
   function downloadBlob(blob: Blob, filename: string) {
@@ -433,25 +411,18 @@
   }
 
   function exportJson() {
-    downloadBlob(
-      new Blob([JSON.stringify(cv, null, 2)], { type: 'application/json' }),
-      `${safeFilename(cv.name)}.json`,
-    )
-    statusMessage = 'JSON exportado. Podrás importarlo más tarde para seguir editando.'
+    downloadBlob(new Blob([JSON.stringify(cv, null, 2)], { type: 'application/json' }), `${safeFilename(cv.name)}.json`)
+    statusMessage = 'JSON exportado.'
   }
 
   function exportMarkdown() {
-    downloadBlob(new Blob([markdownContent], { type: 'text/markdown' }), `${safeFilename(cv.name)}.md`)
+    downloadBlob(new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' }), `${safeFilename(cv.name)}.md`)
     statusMessage = 'Markdown exportado.'
   }
 
   function exportWord() {
-    const html = toWordHtml(cv)
-    downloadBlob(
-      new Blob([html], { type: 'application/msword;charset=utf-8' }),
-      `${safeFilename(cv.name)}.doc`,
-    )
-    statusMessage = 'Documento Word exportado en formato .doc compatible.'
+    downloadBlob(new Blob([toWordHtml(cv)], { type: 'application/msword;charset=utf-8' }), `${safeFilename(cv.name)}.doc`)
+    statusMessage = 'Documento Word exportado.'
   }
 
   async function exportPdf() {
@@ -477,11 +448,18 @@
       }
     }
 
-    const drawWrapped = (text: string, x: number, size: number, font = regular, width = maxWidth, lineGap = 5) => {
-      const words = cleanPdfText(text).split(/\s+/).filter(Boolean)
+    const clean = (value: string) =>
+      (value || '')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[–—]/g, '-')
+        .replace(/•/g, '-')
+        .replace(/[^\x09\x0A\x0D\x20-\x7EÀ-ÿ]/g, '')
+
+    const drawWrapped = (text: string, x: number, size: number, font = regular, width = maxWidth) => {
+      const words = clean(text).split(/\s+/).filter(Boolean)
       let line = ''
       const lines: string[] = []
-
       for (const word of words) {
         const next = line ? `${line} ${word}` : word
         if (font.widthOfTextAtSize(next, size) > width && line) {
@@ -491,34 +469,26 @@
           line = next
         }
       }
-
       if (line) lines.push(line)
-
       for (const currentLine of lines) {
         ensurePage(24)
         page.drawText(currentLine, { x, y, size, font, color: palette.text })
-        y -= size + lineGap
+        y -= size + 5
       }
     }
 
     page.drawRectangle({ x: 0, y: 750, width: 595.28, height: 92, color: palette.secondary })
-    page.drawText(cleanPdfText(cv.name), { x: margin, y: 792, size: 25, font: bold, color: palette.primary })
-    page.drawText(cleanPdfText(cv.headline), { x: margin, y: 762, size: 12, font: regular, color: palette.text })
+    page.drawText(clean(cv.name), { x: margin, y: 792, size: 25, font: bold, color: palette.primary })
+    page.drawText(clean(cv.headline), { x: margin, y: 762, size: 12, font: regular, color: palette.text })
     y = 732
-    drawWrapped([cv.email, cv.phone, cv.location, cv.website].filter(Boolean).join(' · '), margin, 10, regular)
+    drawWrapped([cv.email, cv.phone, cv.location, cv.website].filter(Boolean).join(' · '), margin, 10)
     y -= 12
-    drawWrapped(cv.summary, margin, 11, regular)
+    drawWrapped(cv.summary, margin, 11)
 
     for (const section of cv.sections) {
       ensurePage(92)
       y -= 12
-      page.drawText(cleanPdfText(section.title.toUpperCase()), {
-        x: margin,
-        y,
-        size: 12,
-        font: bold,
-        color: palette.primary,
-      })
+      page.drawText(clean(section.title.toUpperCase()), { x: margin, y, size: 12, font: bold, color: palette.primary })
       y -= 16
       page.drawLine({ start: { x: margin, y }, end: { x: margin + maxWidth, y }, thickness: 1, color: palette.primary })
       y -= 18
@@ -526,48 +496,32 @@
       for (const item of section.items) {
         ensurePage(78)
         if (item.title) {
-          page.drawText(cleanPdfText(item.title), { x: margin, y, size: 12, font: bold, color: palette.text })
+          page.drawText(clean(item.title), { x: margin, y, size: 12, font: bold, color: palette.text })
           y -= 15
         }
         const meta = [item.subtitle, item.meta].filter(Boolean).join(' · ')
-        if (meta) {
-          drawWrapped(meta, margin, 10, regular)
-        }
-        if (item.description) {
-          drawWrapped(item.description, margin, 10, regular)
-        }
-        for (const bullet of item.bullets.filter(Boolean)) {
-          drawWrapped(`• ${bullet}`, margin + 10, 10, regular, maxWidth - 10)
-        }
+        if (meta) drawWrapped(meta, margin, 10)
+        if (item.description) drawWrapped(item.description, margin, 10)
+        for (const bullet of item.bullets.filter(Boolean)) drawWrapped(`- ${bullet}`, margin + 10, 10, regular, maxWidth - 10)
         y -= 8
       }
     }
 
     const bytes = await pdfDoc.save()
-    downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${safeFilename(cv.name)}.pdf`)
+    const pdfBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    downloadBlob(new Blob([pdfBuffer], { type: 'application/pdf' }), `${safeFilename(cv.name)}.pdf`)
     statusMessage = 'PDF generado en el navegador.'
   }
 
-  function cleanPdfText(value: string) {
-    return (value || '')
-      .replace(/[“”]/g, '"')
-      .replace(/[‘’]/g, "'")
-      .replace(/[–—]/g, '-')
-      .replace(/•/g, '-')
-      .replace(/[^\x09\x0A\x0D\x20-\x7EÀ-ÿ]/g, '')
-  }
-
   function importJson() {
-    importInput.click()
+    importInput?.click()
   }
 
   async function handleImport(event: Event) {
     const file = (event.currentTarget as HTMLInputElement).files?.[0]
     if (!file) return
-
     try {
-      const loaded = JSON.parse(await file.text())
-      cv = normalizeCv(loaded)
+      cv = normalizeCv(JSON.parse(await file.text()))
       wizardOpen = false
       persist()
       statusMessage = 'CV importado correctamente.'
@@ -625,63 +579,29 @@
   }
 
   function escapeHtml(value: string) {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
   function toWordHtml(data: CvData) {
-    return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(data.name)} - CV</title>
-<style>
-body{font-family:Arial,sans-serif;color:#111827;line-height:1.45;margin:42px}
-h1{font-size:30px;margin:0 0 6px;color:#1d4ed8}
-h2{font-size:15px;text-transform:uppercase;border-bottom:1px solid #cbd5e1;padding-bottom:6px;margin-top:24px;color:#1d4ed8}
-h3{font-size:14px;margin-bottom:2px}
-p{margin:6px 0}.meta{color:#475569;font-size:12px}.summary{font-size:14px}
-</style>
-</head>
-<body>
-<h1>${escapeHtml(data.name)}</h1>
-<p><strong>${escapeHtml(data.headline)}</strong></p>
-<p class="meta">${escapeHtml([data.email, data.phone, data.location, data.website].filter(Boolean).join(' · '))}</p>
-<p class="summary">${escapeHtml(data.summary)}</p>
-${data.sections
-  .map(
-    (section) => `<h2>${escapeHtml(section.title)}</h2>
-${section.items
-  .map(
-    (item) => `<h3>${escapeHtml(item.title)}</h3>
-<p class="meta">${escapeHtml([item.subtitle, item.meta].filter(Boolean).join(' · '))}</p>
-<p>${escapeHtml(item.description)}</p>
-${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>` : ''}`,
-  )
-  .join('')}`,
-  )
-  .join('')}
-</body>
-</html>`
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.name)} - CV</title><style>body{font-family:Arial,sans-serif;color:#111827;line-height:1.45;margin:42px}h1{font-size:30px;margin:0 0 6px;color:#1d4ed8}h2{font-size:15px;text-transform:uppercase;border-bottom:1px solid #cbd5e1;padding-bottom:6px;margin-top:24px;color:#1d4ed8}h3{font-size:14px;margin-bottom:2px}p{margin:6px 0}.meta{color:#475569;font-size:12px}.summary{font-size:14px}</style></head><body><h1>${escapeHtml(data.name)}</h1><p><strong>${escapeHtml(data.headline)}</strong></p><p class="meta">${escapeHtml([data.email, data.phone, data.location, data.website].filter(Boolean).join(' · '))}</p><p class="summary">${escapeHtml(data.summary)}</p>${data.sections
+      .map(
+        (section) => `<h2>${escapeHtml(section.title)}</h2>${section.items
+          .map(
+            (item) => `<h3>${escapeHtml(item.title)}</h3><p class="meta">${escapeHtml([item.subtitle, item.meta].filter(Boolean).join(' · '))}</p><p>${escapeHtml(item.description)}</p>${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>` : ''}`,
+          )
+          .join('')}`,
+      )
+      .join('')}</body></html>`
   }
 </script>
 
 <svelte:head>
   <title>Generador de CV online gratis | PDF, Word, Markdown y JSON</title>
-  <meta
-    name="description"
-    content="Crea un currículum visual directamente en el navegador, elige plantilla y exporta tu CV a PDF, Word, Markdown o JSON."
-  />
+  <meta name="description" content="Crea un currículum visual directamente en el navegador, elige plantilla y exporta tu CV a PDF, Word, Markdown o JSON." />
   <meta name="robots" content="index,follow" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Generador de CV online gratis" />
-  <meta
-    property="og:description"
-    content="Editor visual de currículum con plantillas, apartados personalizados y exportación local a PDF, Word, Markdown y JSON."
-  />
+  <meta property="og:description" content="Editor visual de currículum con plantillas, apartados personalizados y exportación local a PDF, Word, Markdown y JSON." />
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
@@ -690,21 +610,13 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
 
   <header class="site-header">
     <nav class="header-inner" aria-label="Navegación principal">
-      <a class="brand" href="/" aria-label="Ir al inicio">
+      <a class="brand" href="./" aria-label="Ir al inicio">
         <span class="brand-mark">CV</span>
-        <span>
-          <strong>CV Generator</strong>
-          <small>Editor visual privado</small>
-        </span>
+        <span><strong>CV Generator</strong><small>Editor visual privado</small></span>
       </a>
-
       <div class="header-actions">
-        <button class="btn btn-ghost hide-mobile" type="button" on:click={() => (wizardOpen = true)}>
-          Wizard inicial
-        </button>
-        <button class="btn btn-secondary" type="button" on:click={toggleTheme}>
-          Cambiar tema
-        </button>
+        <button class="btn btn-ghost hide-mobile" type="button" on:click={() => (wizardOpen = true)}>Wizard inicial</button>
+        <button class="btn btn-secondary" type="button" on:click={toggleTheme}>Cambiar tema</button>
       </div>
     </nav>
   </header>
@@ -714,16 +626,12 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
       <div class="hero-content">
         <span class="badge">Sin subir archivos · Exportación local</span>
         <h1 id="main-title">Crea y edita tu CV directamente sobre el documento</h1>
-        <p>
-          Elige un estilo, escribe encima de la previsualización real, añade apartados y descarga tu
-          currículum en PDF, Word, Markdown o JSON para seguir editándolo más tarde.
-        </p>
+        <p>Elige un estilo, escribe encima de la previsualización real, añade apartados y descarga tu currículum en PDF, Word, Markdown o JSON.</p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="#editor">Empezar a editar</a>
           <button class="btn btn-secondary" type="button" on:click={exportPdf}>Descargar PDF</button>
         </div>
       </div>
-
       <aside class="hero-card" aria-label="Estado del CV">
         <strong>{completion}% completo</strong>
         <div class="progress" aria-hidden="true"><span style={`width: ${completion}%`}></span></div>
@@ -734,27 +642,16 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
     <section class="editor-layout" id="editor" aria-label="Editor visual de CV">
       <aside class="control-panel" class:open={showMobilePanel} aria-label="Opciones del generador">
         <div class="panel-header">
-          <div>
-            <span class="eyebrow">Configuración</span>
-            <h2>Diseño y exportación</h2>
-          </div>
-          <button class="icon-button mobile-only" type="button" on:click={() => (showMobilePanel = false)}>
-            ×
-          </button>
+          <div><span class="eyebrow">Configuración</span><h2>Diseño y exportación</h2></div>
+          <button class="icon-button mobile-only" type="button" on:click={() => (showMobilePanel = false)} aria-label="Cerrar opciones">×</button>
         </div>
 
         <section class="panel-card">
           <h3>Estilo de CV</h3>
-          <div class="theme-list" role="list">
+          <div class="theme-list">
             {#each themes as theme}
-              <button
-                class:active={selectedTheme === theme.id}
-                class="theme-option"
-                type="button"
-                on:click={() => (selectedTheme = theme.id)}
-              >
-                <strong>{theme.name}</strong>
-                <span>{theme.description}</span>
+              <button class:active={selectedTheme === theme.id} class="theme-option" type="button" on:click={() => (selectedTheme = theme.id)}>
+                <strong>{theme.name}</strong><span>{theme.description}</span>
               </button>
             {/each}
           </div>
@@ -792,94 +689,44 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
 
         <section class="panel-card">
           <h3>Vista Markdown</h3>
-          <textarea class="textarea markdown-preview" readonly>{markdownContent}</textarea>
+          <textarea class="textarea markdown-preview" readonly value={markdownContent}></textarea>
         </section>
       </aside>
 
       <section class="workspace" aria-label="Previsualización editable">
         <div class="workspace-toolbar">
-          <button class="btn btn-secondary mobile-only" type="button" on:click={() => (showMobilePanel = true)}>
-            Opciones
-          </button>
+          <button class="btn btn-secondary mobile-only" type="button" on:click={() => (showMobilePanel = true)}>Opciones</button>
           <p>{statusMessage}</p>
         </div>
 
         <article class={`cv-page cv-${selectedTheme}`} aria-label="Currículum editable">
           <header class="cv-header">
             <div>
-              <p
-                class="cv-name editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Nombre"
-                on:input={(event) => updateField('name', textFromEvent(event))}
-              >{cv.name}</p>
-              <p
-                class="cv-headline editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Titular profesional"
-                on:input={(event) => updateField('headline', textFromEvent(event))}
-              >{cv.headline}</p>
+              <input class="cv-name cv-input" aria-label="Nombre" bind:value={cv.name} on:input={() => updateCvField('name', cv.name)} />
+              <input class="cv-headline cv-input" aria-label="Titular profesional" bind:value={cv.headline} on:input={() => updateCvField('headline', cv.headline)} />
             </div>
             <ul class="cv-contact" aria-label="Datos de contacto">
-              <li
-                class="editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Email"
-                on:input={(event) => updateField('email', textFromEvent(event))}
-              >{cv.email}</li>
-              <li
-                class="editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Teléfono"
-                on:input={(event) => updateField('phone', textFromEvent(event))}
-              >{cv.phone}</li>
-              <li
-                class="editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Ubicación"
-                on:input={(event) => updateField('location', textFromEvent(event))}
-              >{cv.location}</li>
-              <li
-                class="editable"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Web"
-                on:input={(event) => updateField('website', textFromEvent(event))}
-              >{cv.website}</li>
+              <li><input class="cv-input" aria-label="Email" bind:value={cv.email} on:input={() => updateCvField('email', cv.email)} /></li>
+              <li><input class="cv-input" aria-label="Teléfono" bind:value={cv.phone} on:input={() => updateCvField('phone', cv.phone)} /></li>
+              <li><input class="cv-input" aria-label="Ubicación" bind:value={cv.location} on:input={() => updateCvField('location', cv.location)} /></li>
+              <li><input class="cv-input" aria-label="Web" bind:value={cv.website} on:input={() => updateCvField('website', cv.website)} /></li>
             </ul>
           </header>
 
           <section class="cv-summary" aria-labelledby="summary-title">
             <h2 id="summary-title">Perfil</h2>
-            <p
-              class="editable"
-              contenteditable="plaintext-only"
-              role="textbox"
-              aria-label="Resumen profesional"
-              on:input={(event) => updateField('summary', textFromEvent(event))}
-            >{cv.summary}</p>
+            <textarea class="cv-textarea" aria-label="Resumen profesional" bind:value={cv.summary} on:input={() => updateCvField('summary', cv.summary)}></textarea>
           </section>
 
           {#each cv.sections as section, index (section.id)}
             <section class="cv-section" aria-label={section.title}>
               <div class="section-toolbar">
-                <h2
-                  class="editable"
-                  contenteditable="plaintext-only"
-                  role="textbox"
-                  aria-label="Título del apartado"
-                  on:input={(event) => updateSectionTitle(section.id, textFromEvent(event))}
-                >{section.title}</h2>
+                <input class="section-title cv-input" aria-label="Título del apartado" bind:value={section.title} on:input={() => updateSection(section.id, { title: section.title })} />
                 <div class="mini-actions">
-                  <button type="button" on:click={() => moveSection(section.id, -1)} aria-label="Subir apartado" disabled={index === 0}>↑</button>
-                  <button type="button" on:click={() => moveSection(section.id, 1)} aria-label="Bajar apartado" disabled={index === cv.sections.length - 1}>↓</button>
+                  <button type="button" on:click={() => moveSection(section.id, -1)} disabled={index === 0}>↑</button>
+                  <button type="button" on:click={() => moveSection(section.id, 1)} disabled={index === cv.sections.length - 1}>↓</button>
                   <button type="button" on:click={() => addItem(section.id)}>+ item</button>
-                  <button type="button" on:click={() => removeSection(section.id)} aria-label="Eliminar apartado">×</button>
+                  <button type="button" on:click={() => removeSection(section.id)}>×</button>
                 </div>
               </div>
 
@@ -887,48 +734,18 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
                 <div class="cv-item">
                   <div class="item-heading">
                     <div>
-                      <h3
-                        class="editable"
-                        contenteditable="plaintext-only"
-                        role="textbox"
-                        aria-label="Título del elemento"
-                        on:input={(event) => updateItem(section.id, item.id, 'title', textFromEvent(event))}
-                      >{item.title}</h3>
-                      <p
-                        class="item-subtitle editable"
-                        contenteditable="plaintext-only"
-                        role="textbox"
-                        aria-label="Subtítulo del elemento"
-                        on:input={(event) => updateItem(section.id, item.id, 'subtitle', textFromEvent(event))}
-                      >{item.subtitle}</p>
+                      <input class="item-title cv-input" aria-label="Título del elemento" bind:value={item.title} on:input={() => updateItem(section.id, item.id, { title: item.title })} />
+                      <input class="item-subtitle cv-input" aria-label="Subtítulo del elemento" bind:value={item.subtitle} on:input={() => updateItem(section.id, item.id, { subtitle: item.subtitle })} />
                     </div>
-                    <p
-                      class="item-meta editable"
-                      contenteditable="plaintext-only"
-                      role="textbox"
-                      aria-label="Fechas o información adicional"
-                      on:input={(event) => updateItem(section.id, item.id, 'meta', textFromEvent(event))}
-                    >{item.meta}</p>
+                    <input class="item-meta cv-input" aria-label="Fechas o información adicional" bind:value={item.meta} on:input={() => updateItem(section.id, item.id, { meta: item.meta })} />
                   </div>
-                  <p
-                    class="editable item-description"
-                    contenteditable="plaintext-only"
-                    role="textbox"
-                    aria-label="Descripción"
-                    on:input={(event) => updateItem(section.id, item.id, 'description', textFromEvent(event))}
-                  >{item.description}</p>
+                  <textarea class="cv-textarea item-description" aria-label="Descripción" bind:value={item.description} on:input={() => updateItem(section.id, item.id, { description: item.description })}></textarea>
 
                   {#if item.bullets.length}
                     <ul class="bullet-list">
                       {#each item.bullets as bullet, bulletIndex}
                         <li>
-                          <span
-                            class="editable"
-                            contenteditable="plaintext-only"
-                            role="textbox"
-                            aria-label="Punto destacado"
-                            on:input={(event) => updateBullet(section.id, item.id, bulletIndex, textFromEvent(event))}
-                          >{bullet}</span>
+                          <input class="cv-input" aria-label="Punto destacado" value={bullet} on:input={(event) => updateBullet(section.id, item.id, bulletIndex, inputValue(event))} />
                           <button type="button" aria-label="Eliminar punto" on:click={() => removeBullet(section.id, item.id, bulletIndex)}>×</button>
                         </li>
                       {/each}
@@ -950,7 +767,7 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
     <section class="seo-content" aria-labelledby="how-title">
       <h2 id="how-title">Cómo crear tu currículum online</h2>
       <ol>
-        <li>Completa el wizard inicial o edita directamente los textos del CV.</li>
+        <li>Completa el wizard inicial o edita directamente los campos del CV.</li>
         <li>Elige un diseño profesional: moderno, clásico o creativo.</li>
         <li>Añade experiencias, formación, competencias, proyectos o apartados personalizados.</li>
         <li>Exporta tu currículum a PDF, Word, Markdown o JSON sin enviar tus datos a un servidor.</li>
@@ -964,51 +781,25 @@ ${item.bullets.length ? `<ul>${item.bullets.map((bullet) => `<li>${escapeHtml(bu
 </div>
 
 {#if wizardOpen}
-  <div class="modal-backdrop" role="presentation">
-    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+  <div class="modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <div class="modal-header">
-        <div>
-          <span class="eyebrow">Primer paso</span>
-          <h2 id="wizard-title">Añade los datos básicos de tu CV</h2>
-        </div>
+        <div><span class="eyebrow">Primer paso</span><h2 id="wizard-title">Añade los datos básicos de tu CV</h2></div>
         <button class="icon-button" type="button" on:click={skipWizard} aria-label="Cerrar wizard">×</button>
       </div>
-
       <div class="wizard-grid">
-        <label>
-          <span>Nombre completo</span>
-          <input class="input" bind:value={wizard.name} placeholder="Ej. Ana García" />
-        </label>
-        <label>
-          <span>Titular profesional</span>
-          <input class="input" bind:value={wizard.headline} placeholder="Ej. Desarrolladora frontend" />
-        </label>
-        <label>
-          <span>Email</span>
-          <input class="input" bind:value={wizard.email} type="email" placeholder="ana@email.com" />
-        </label>
-        <label>
-          <span>Teléfono</span>
-          <input class="input" bind:value={wizard.phone} placeholder="+34..." />
-        </label>
-        <label>
-          <span>Ubicación</span>
-          <input class="input" bind:value={wizard.location} placeholder="Ciudad, país" />
-        </label>
-        <label>
-          <span>Web o LinkedIn</span>
-          <input class="input" bind:value={wizard.website} placeholder="https://..." />
-        </label>
-        <label class="wide">
-          <span>Resumen profesional</span>
-          <textarea class="textarea" bind:value={wizard.summary} rows="4" placeholder="Describe tu perfil en 3 o 4 líneas."></textarea>
-        </label>
+        <label><span>Nombre completo</span><input class="input" bind:value={wizard.name} placeholder="Ej. Ana García" /></label>
+        <label><span>Titular profesional</span><input class="input" bind:value={wizard.headline} placeholder="Ej. Desarrolladora frontend" /></label>
+        <label><span>Email</span><input class="input" bind:value={wizard.email} type="email" placeholder="ana@email.com" /></label>
+        <label><span>Teléfono</span><input class="input" bind:value={wizard.phone} placeholder="+34..." /></label>
+        <label><span>Ubicación</span><input class="input" bind:value={wizard.location} placeholder="Ciudad, país" /></label>
+        <label><span>Web o LinkedIn</span><input class="input" bind:value={wizard.website} placeholder="https://..." /></label>
+        <label class="wide"><span>Resumen profesional</span><textarea class="textarea" bind:value={wizard.summary} rows="4" placeholder="Describe tu perfil en 3 o 4 líneas."></textarea></label>
       </div>
-
       <div class="modal-actions">
         <button class="btn btn-secondary" type="button" on:click={skipWizard}>Usar plantilla de ejemplo</button>
         <button class="btn btn-primary" type="button" on:click={applyWizard}>Crear CV editable</button>
       </div>
-    </section>
+    </div>
   </div>
 {/if}
