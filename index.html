@@ -1,10 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="es" data-theme="light">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (() => {
+        const stored = localStorage.getItem('cv-generator:theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.dataset.theme = stored || (prefersDark ? 'dark' : 'light');
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>cv-generator</title>
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="canonical" href="https://cv-generator.alon.one/" />
+    <title>Generador de CV online gratis | PDF, Word y Markdown</title>
+    <meta
+      name="description"
+      content="Crea un currículum visual desde el navegador, edita directamente sobre el CV y exporta a PDF, Word, Markdown o JSON."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "CV Generator",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Any",
+        "description": "Generador visual de currículums con plantillas y exportación local a PDF, Word, Markdown y JSON."
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>
